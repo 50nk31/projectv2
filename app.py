@@ -3,10 +3,9 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, login_user, logout_user, login_required, UserMixin, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime
-from functools import lru_cache
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'super-secret-key'
+app.config['SECRET_KEY'] = 'your-secret-key'
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///database.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
@@ -59,15 +58,14 @@ def logout():
     logout_user()
     return redirect(url_for('login'))
 
-@lru_cache(maxsize=1)
-def get_cached_employees():
-    return Employee.query.all()
-
 @app.route('/')
 @login_required
 def index():
-    employees = get_cached_employees()
-    open_works = {e.id: WorkTime.query.filter_by(employee_id=e.id, end_time=None).first() for e in employees}
+    employees = Employee.query.all()
+    open_works = {}
+    for emp in employees:
+        open_work = WorkTime.query.filter_by(employee_id=emp.id, end_time=None).first()
+        open_works[emp.id] = open_work
     return render_template('index.html', employees=employees, open_works=open_works)
 
 @app.route('/employee/add', methods=['POST'])
@@ -77,12 +75,12 @@ def add_employee():
     hourly_rate = request.form.get('hourly_rate')
     try:
         hourly_rate = float(hourly_rate)
-    except:
+    except (ValueError, TypeError):
         hourly_rate = 0
     if full_name and hourly_rate > 0:
-        db.session.add(Employee(full_name=full_name, hourly_rate=hourly_rate))
+        emp = Employee(full_name=full_name, hourly_rate=hourly_rate)
+        db.session.add(emp)
         db.session.commit()
-        get_cached_employees.cache_clear()
         flash('Сотрудник добавлен')
     else:
         flash('Неверные данные')
@@ -94,28 +92,29 @@ def delete_employee(employee_id):
     employee = Employee.query.get_or_404(employee_id)
     db.session.delete(employee)
     db.session.commit()
-    get_cached_employees.cache_clear()
-    flash('Сотрудник удалён')
+    flash(f"Сотрудник '{employee.full_name}' удалён")
     return redirect(url_for('index'))
 
-@app.route('/work/start/<int:employee_id>')
+@app.route('/work/start/<int:employee_id>', methods=['GET'])
 @login_required
 def start_work(employee_id):
-    open_work = WorkTime.query.filter_by(employee_id=employee_id, end_time=None).first()
+    employee = Employee.query.get_or_404(employee_id)
+    open_work = WorkTime.query.filter_by(employee_id=employee.id, end_time=None).first()
     if open_work:
         flash('Смена уже начата')
     else:
-        db.session.add(WorkTime(employee_id=employee_id, start_time=datetime.now()))
+        new_work = WorkTime(employee_id=employee.id, start_time=datetime.now())
+        db.session.add(new_work)
         db.session.commit()
-        flash('Смена начата')
+        flash(f'Смена для {employee.full_name} начата')
     return redirect(url_for('index'))
 
-@app.route('/work/end/<int:worktime_id>')
+@app.route('/work/end/<int:worktime_id>', methods=['GET'])
 @login_required
 def end_work(worktime_id):
-    wt = WorkTime.query.get_or_404(worktime_id)
-    if wt.end_time is None:
-        wt.end_time = datetime.now()
+    worktime = WorkTime.query.get_or_404(worktime_id)
+    if worktime.end_time is None:
+        worktime.end_time = datetime.now()
         db.session.commit()
         flash('Смена завершена')
     else:
@@ -125,17 +124,22 @@ def end_work(worktime_id):
 @app.route('/salary/<int:employee_id>')
 @login_required
 def salary(employee_id):
-    emp = Employee.query.get_or_404(employee_id)
-    times = WorkTime.query.filter_by(employee_id=employee_id).filter(WorkTime.end_time.isnot(None)).all()
-    total_hours = sum([(w.end_time - w.start_time).total_seconds() for w in times]) / 3600
-    return render_template('salary.html', employee=emp, hours=total_hours, total_pay=total_hours * emp.hourly_rate)
+    employee = Employee.query.get_or_404(employee_id)
+    worktimes = WorkTime.query.filter_by(employee_id=employee.id).filter(WorkTime.end_time.isnot(None)).all()
+    total_seconds = sum([(wt.end_time - wt.start_time).total_seconds() for wt in worktimes])
+    hours = total_seconds / 3600
+    total_pay = hours * employee.hourly_rate
+    return render_template('salary.html', employee=employee, hours=hours, total_pay=total_pay)
 
-if __name__ == '__main__':
-    with app.app_context():
-        db.create_all()
-        if not User.query.filter_by(username='admin').first():
-            admin = User(username='admin')
-            admin.set_password('admin')
-            db.session.add(admin)
-            db.session.commit()
-    app.run(debug=True)
+# Автоинициализация базы данных при запуске
+with app.app_context():
+    db.create_all()
+
+    if not User.query.filter_by(username='admin').first():
+        admin = User(username='admin')
+        admin.set_password('admin')
+        db.session.add(admin)
+        db.session.commit()
+        print("Admin user created.")
+    else:
+        print("Admin user already exists.")
