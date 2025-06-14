@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>Зарплата</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <div class="container">
+    <h2>Зарплата {{ employee.full_name }}</h2>
+    <p>Часы: {{ hours | round(2) }}</p>
+    <p>Всего: {{ total_pay | round(2) }} ₽</p>
+    <a href="{{ url_for('index') }}">Назад</a>
+  </div>
+</body>
+</html>
